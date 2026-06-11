@@ -6,7 +6,7 @@ const { checkPermission } = require("../services/permissionService");
 const toFrontend = (doc) => {
   const s = doc.student || {};
   return {
-    id: doc._id,
+    id: s._id || doc._id,
     student: s._id,
     studentId: s.studentId,
     name: s.firstName ? `${s.firstName} ${s.lastName}` : "",
@@ -133,11 +133,12 @@ const bulkAttendance = async (req, res) => {
 const getAttendance = async (req, res) => {
   try {
     const filter = {};
+    let classStudents = [];
 
     if (req.query.class || req.query.className) {
       const className = req.query.class || req.query.className;
-      const students = await Student.find({ className });
-      const ids = students.map((s) => s._id);
+      classStudents = await Student.find({ className });
+      const ids = classStudents.map((s) => s._id);
       filter.student = { $in: ids };
     }
 
@@ -149,15 +150,53 @@ const getAttendance = async (req, res) => {
       filter.date = { $gte: dateStart, $lt: dateEnd };
     }
 
-    const attendance = await Attendance.find(filter)
+    const attendanceRecords = await Attendance.find(filter)
       .populate("student", "studentId firstName lastName gender className")
       .populate("markedBy", "username")
       .sort({ createdAt: -1 });
 
+    if (classStudents.length > 0) {
+      const attendanceMap = {};
+      attendanceRecords.forEach((rec) => {
+        const sId = rec.student?._id?.toString();
+        if (sId) attendanceMap[sId] = rec;
+      });
+
+      const merged = classStudents.map((student) => {
+        const existing = attendanceMap[student._id.toString()];
+        if (existing) return toFrontend(existing);
+        return {
+          id: student._id,
+          student: student._id,
+          studentId: student.studentId,
+          name: `${student.firstName} ${student.lastName}`,
+          firstName: student.firstName,
+          lastName: student.lastName,
+          gender: student.gender,
+          class: student.className,
+          className: student.className,
+          date: req.query.date
+            ? new Date(req.query.date).toISOString().split("T")[0]
+            : null,
+          status: null,
+          attendanceStatus: null,
+          markedBy: null,
+          markedByName: "",
+          createdAt: null,
+        };
+      });
+
+      return res.status(200).json({
+        success: true,
+        count: merged.length,
+        data: merged,
+      });
+    }
+
     res.status(200).json({
       success: true,
-      count: attendance.length,
-      data: attendance.map(toFrontend),
+      count: attendanceRecords.length,
+      data: attendanceRecords.map(toFrontend),
     });
   } catch (error) {
     res.status(500).json({
