@@ -112,7 +112,7 @@ const updateStudent = async (req, res) => {
     const student = await Student.findByIdAndUpdate(
       req.params.id,
       updateData,
-      { new: true, runValidators: true }
+      { returnDocument: "after", runValidators: true }
     );
     if (!student)
       return res

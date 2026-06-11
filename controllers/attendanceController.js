@@ -197,7 +197,7 @@ const updateAttendance = async (req, res) => {
     const attendance = await Attendance.findByIdAndUpdate(
       req.params.id,
       req.body,
-      { new: true, runValidators: true }
+      { returnDocument: "after", runValidators: true }
     );
 
     if (!attendance) {
