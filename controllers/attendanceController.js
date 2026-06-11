@@ -3,11 +3,26 @@ const Student = require("../models/Student");
 
 const { checkPermission } = require("../services/permissionService");
 
-/*
-=====================================
-CREATE ATTENDANCE (WITH PERMISSION LOGIC)
-=====================================
-*/
+const toFrontend = (doc) => {
+  const s = doc.student || {};
+  return {
+    id: doc._id,
+    student: s._id,
+    studentId: s.studentId,
+    name: s.firstName ? `${s.firstName} ${s.lastName}` : "",
+    firstName: s.firstName,
+    lastName: s.lastName,
+    gender: s.gender,
+    class: s.className,
+    className: s.className,
+    date: doc.date,
+    status: doc.status,
+    attendanceStatus: doc.status,
+    markedBy: doc.markedBy,
+    markedByName: doc.markedBy?.username || "",
+    createdAt: doc.createdAt,
+  };
+};
 
 const createAttendance = async (req, res) => {
   try {
@@ -24,16 +39,8 @@ const createAttendance = async (req, res) => {
 
     let finalStatus = status;
 
-    /*
-    =====================================
-    AUTO PERMISSION CHECK
-    =====================================
-    */
     if (status === "Absent") {
-      const permission = await checkPermission(
-        studentExists.studentId // MUST MATCH partner entity_id
-      );
-
+      const permission = await checkPermission(studentExists.studentId);
       if (permission.success && permission.hasPermission) {
         finalStatus = "On Permission";
       }
@@ -45,10 +52,14 @@ const createAttendance = async (req, res) => {
       markedBy: req.user.id,
     });
 
+    const populated = await Attendance.findById(attendance._id)
+      .populate("student", "studentId firstName lastName gender className")
+      .populate("markedBy", "username");
+
     res.status(201).json({
       success: true,
       message: "Attendance recorded successfully",
-      data: attendance,
+      data: toFrontend(populated),
     });
   } catch (error) {
     res.status(500).json({
@@ -58,56 +69,58 @@ const createAttendance = async (req, res) => {
   }
 };
 
-/*
-=====================================
-BULK ATTENDANCE (UPDATED)
-=====================================
-*/
-
 const bulkAttendance = async (req, res) => {
   try {
-    const attendanceData = req.body;
+    const records = Array.isArray(req.body)
+      ? req.body
+      : req.body.records || [];
 
-    if (!Array.isArray(attendanceData)) {
+    if (!Array.isArray(records) || records.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Request body must be an array",
+        message: "Request body must be an array or have a records array",
       });
     }
 
-    const records = [];
+    const results = [];
 
-    for (const item of attendanceData) {
-      const student = await Student.findById(item.student);
+    for (const item of records) {
+      const studentId = item.student || item.studentId;
+      const student = studentId
+        ? await Student.findById(studentId)
+        : null;
 
       if (!student) continue;
 
-      let finalStatus = item.status;
+      let finalStatus = item.status || item.attendanceStatus || "Absent";
 
-      if (item.status === "Absent") {
-        const permission = await checkPermission(
-          student.studentId
-        );
-
+      if (finalStatus === "Absent") {
+        const permission = await checkPermission(student.studentId);
         if (permission.success && permission.hasPermission) {
           finalStatus = "On Permission";
         }
       }
 
       const attendance = await Attendance.create({
-        student: item.student,
+        student: student._id,
         status: finalStatus,
         markedBy: req.user.id,
       });
 
-      records.push(attendance);
+      results.push(attendance);
     }
+
+    const populated = await Attendance.find({
+      _id: { $in: results.map((r) => r._id) },
+    })
+      .populate("student", "studentId firstName lastName gender className")
+      .populate("markedBy", "username");
 
     res.status(201).json({
       success: true,
       message: "Bulk attendance recorded successfully",
-      total: records.length,
-      data: records,
+      total: populated.length,
+      data: populated.map(toFrontend),
     });
   } catch (error) {
     res.status(500).json({
@@ -117,23 +130,34 @@ const bulkAttendance = async (req, res) => {
   }
 };
 
-/*
-=====================================
-GET ALL ATTENDANCE
-=====================================
-*/
-
 const getAttendance = async (req, res) => {
   try {
-    const attendance = await Attendance.find()
-      .populate("student", "studentId firstName lastName className")
+    const filter = {};
+
+    if (req.query.class || req.query.className) {
+      const className = req.query.class || req.query.className;
+      const students = await Student.find({ className });
+      const ids = students.map((s) => s._id);
+      filter.student = { $in: ids };
+    }
+
+    if (req.query.date) {
+      const dateStart = new Date(req.query.date);
+      dateStart.setHours(0, 0, 0, 0);
+      const dateEnd = new Date(dateStart);
+      dateEnd.setDate(dateEnd.getDate() + 1);
+      filter.date = { $gte: dateStart, $lt: dateEnd };
+    }
+
+    const attendance = await Attendance.find(filter)
+      .populate("student", "studentId firstName lastName gender className")
       .populate("markedBy", "username")
       .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
       count: attendance.length,
-      data: attendance,
+      data: attendance.map(toFrontend),
     });
   } catch (error) {
     res.status(500).json({
@@ -142,12 +166,6 @@ const getAttendance = async (req, res) => {
     });
   }
 };
-
-/*
-=====================================
-GET BY ID
-=====================================
-*/
 
 const getAttendanceById = async (req, res) => {
   try {
@@ -164,7 +182,7 @@ const getAttendanceById = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: attendance,
+      data: toFrontend(attendance),
     });
   } catch (error) {
     res.status(500).json({
@@ -173,12 +191,6 @@ const getAttendanceById = async (req, res) => {
     });
   }
 };
-
-/*
-=====================================
-UPDATE
-=====================================
-*/
 
 const updateAttendance = async (req, res) => {
   try {
@@ -195,10 +207,14 @@ const updateAttendance = async (req, res) => {
       });
     }
 
+    const populated = await Attendance.findById(attendance._id)
+      .populate("student", "studentId firstName lastName gender className")
+      .populate("markedBy", "username");
+
     res.status(200).json({
       success: true,
       message: "Attendance updated successfully",
-      data: attendance,
+      data: toFrontend(populated),
     });
   } catch (error) {
     res.status(500).json({
@@ -207,12 +223,6 @@ const updateAttendance = async (req, res) => {
     });
   }
 };
-
-/*
-=====================================
-DELETE
-=====================================
-*/
 
 const deleteAttendance = async (req, res) => {
   try {
@@ -239,17 +249,10 @@ const deleteAttendance = async (req, res) => {
   }
 };
 
-/*
-=====================================
-REPORTS
-=====================================
-*/
-
 const dailyReport = async (req, res) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -260,7 +263,7 @@ const dailyReport = async (req, res) => {
     res.status(200).json({
       success: true,
       count: attendance.length,
-      data: attendance,
+      data: attendance.map(toFrontend),
     });
   } catch (error) {
     res.status(500).json({
@@ -279,7 +282,7 @@ const studentReport = async (req, res) => {
     res.status(200).json({
       success: true,
       count: attendance.length,
-      data: attendance,
+      data: attendance.map(toFrontend),
     });
   } catch (error) {
     res.status(500).json({
@@ -304,7 +307,7 @@ const classReport = async (req, res) => {
     res.status(200).json({
       success: true,
       count: attendance.length,
-      data: attendance,
+      data: attendance.map(toFrontend),
     });
   } catch (error) {
     res.status(500).json({

@@ -12,6 +12,9 @@ async (req, res) => {
     const totalStudents =
       await Student.countDocuments();
 
+    const activeStudents =
+      await Student.countDocuments({ status: "Active" });
+
     const present =
       await Attendance.countDocuments({
         status: "Present",
@@ -35,6 +38,7 @@ async (req, res) => {
 
     res.status(200).json({
       totalStudents,
+      activeStudents,
       present,
       absent,
       late,
