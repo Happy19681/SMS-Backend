@@ -10,6 +10,7 @@ const studentRoutes = require("./routes/studentRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const partnerRoutes = require("./routes/partnerRoutes");
+const settingsRoutes = require("./routes/settingsRoutes");
 
 connectDB();
 
@@ -35,6 +36,7 @@ app.use("/api/students", studentRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/partner", partnerRoutes);
+app.use("/api/settings", settingsRoutes);
 
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

@@ -6,7 +6,8 @@ const { checkPermission } = require("../services/permissionService");
 const toFrontend = (doc) => {
   const s = doc.student || {};
   return {
-    id: s._id || doc._id,
+    id: doc._id,
+    _id: doc._id,
     student: s._id,
     studentId: s.studentId,
     name: s.firstName ? `${s.firstName} ${s.lastName}` : "",
@@ -26,9 +27,10 @@ const toFrontend = (doc) => {
 
 const createAttendance = async (req, res) => {
   try {
-    const { student, status } = req.body;
+    const { student, status, studentId } = req.body;
 
-    const studentExists = await Student.findById(student);
+    let studentExists = student ? await Student.findById(student) : null;
+    if (!studentExists && studentId) studentExists = await Student.findOne({ studentId });
 
     if (!studentExists) {
       return res.status(404).json({
@@ -85,11 +87,10 @@ const bulkAttendance = async (req, res) => {
     const results = [];
 
     for (const item of records) {
-      const studentId = item.student || item.studentId;
-      const student = studentId
-        ? await Student.findById(studentId)
-        : null;
-
+      const studentLookup = item.student || item.studentId;
+      if (!studentLookup) continue;
+      let student = await Student.findById(studentLookup);
+      if (!student) student = await Student.findOne({ studentId: studentLookup });
       if (!student) continue;
 
       let finalStatus = item.status || item.attendanceStatus || "Absent";
@@ -101,11 +102,14 @@ const bulkAttendance = async (req, res) => {
         }
       }
 
-      const attendance = await Attendance.create({
+      const attendanceData = {
         student: student._id,
         status: finalStatus,
         markedBy: req.user.id,
-      });
+      };
+      if (item.date) attendanceData.date = item.date;
+
+      const attendance = await Attendance.create(attendanceData);
 
       results.push(attendance);
     }
@@ -166,7 +170,8 @@ const getAttendance = async (req, res) => {
         const existing = attendanceMap[student._id.toString()];
         if (existing) return toFrontend(existing);
         return {
-          id: student._id,
+          id: null,
+          _id: null,
           student: student._id,
           studentId: student.studentId,
           name: `${student.firstName} ${student.lastName}`,
